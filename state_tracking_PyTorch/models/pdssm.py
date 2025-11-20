@@ -156,7 +156,7 @@ class PD_Block(nn.Module):
         """
 
         if self.transition_type in {"perm_only", "perm_static"}:
-            D = t.ones(B, L, N, device=x.device, dtype=hidden_states.dtype)
+            D = t.ones(B, L, N, device=x.device, dtype=x.dtype)
             magnitudes = t.complex(real=D, imag=t.zeros_like(D))
             phases_raw = 2*math.pi*D
             phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))

@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import wandb
 
 # Local imports
 from data_dir.dataloaders import (
@@ -152,7 +153,7 @@ def train_model(
                 optimizer.step()
                 optimizer.zero_grad()
 
-                optimizer.step()
+                # optimizer.step()
                 lr_scheduler.step()
 
             total_loss += loss.item()
@@ -193,6 +194,10 @@ def train_model(
                     f"Validation Acc: {accuracy:.4f}, "
                     f"Time: {end_time - start_time:.2f} sec"
                 )
+                wandb.log({
+                    "val/loss": avg_loss,
+                    "val/accuracy": accuracy,
+                }, step=step)
 
                 steps.append(step)
                 val_accs.append(accuracy)
@@ -274,6 +279,12 @@ def run_experiment(config):
     config_name = config.get("config_name")
     accumulation_steps = config.get("accumulation_steps", 1)
     transition_type = config.get("transition_type", "pd")
+
+    wandb.init(
+        project="pdssm",
+        name=f"{transition_type}_{task}_{model_name}_{config_name}_run{run}",
+        config=config,
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
