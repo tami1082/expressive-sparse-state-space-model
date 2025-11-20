@@ -35,8 +35,10 @@ To contrast symbol-dependent permutations against purely diagonal dynamics, set
 `transition_type` inside a config JSON:
 
 * `"pd"` (default): learn both permutation dictionary selections and input-dependent diagonals.
-* `"perm_only"`: force a unit diagonal so only the symbol-conditioned permutation dictionary drives the recurrence.
+* `"perm_only"`: force a unit diagonal so only the symbol-conditioned permutation dictionary drives the recurrence (Exp 1).
 * `"diag_only"`: replace the permutation with an identity matrix so only the input-dependent diagonal carries state.
+* `"perm_static"`: learn a single global permutation matrix that is reused at every step (Exp 2).
+* `"pd_static"`: learn a global permutation and a global complex diagonal, both reused across time (Exp 3).
 
 These options help recreate the ablations discussed in the paper—showing that rich permutations alone can solve regular tasks and length-generalize, while diagonals without permutations struggle on parity/mod/group.
 
