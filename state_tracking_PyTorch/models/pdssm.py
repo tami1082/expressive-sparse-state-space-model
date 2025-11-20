@@ -120,6 +120,7 @@ class PD_Block(nn.Module):
 
         if self.transition_type == "diag_only":
             # Identity transition; all structure must be handled by the diagonal
+            # check in the paper for more details, C diagonal
             P = t.eye(N, device=x.device, dtype=hidden_states.dtype).unsqueeze(0).unsqueeze(0)
             P = P.expand(B, L, -1, -1)
         elif self.transition_type in {"perm_static", "pd_static"}:
@@ -130,7 +131,8 @@ class PD_Block(nn.Module):
             P = (y_hard - y_soft).detach() + y_soft
             P = P.unsqueeze(0).unsqueeze(0).expand(B, L, -1, -1)
         else:
-            # B x L x K
+            # B x L x K 
+            # permutation only P(ut)
             selection_weights = F.softmax(self.S(x), dim=-1)
 
             # B x L x N x N
@@ -155,11 +157,16 @@ class PD_Block(nn.Module):
 
         if self.transition_type in {"perm_only", "perm_static"}:
             D = t.ones(B, L, N, device=x.device, dtype=hidden_states.dtype)
-        elif self.transition_type == "pd_static":
+            magnitudes = t.complex(real=D, imag=t.zeros_like(D))
+            phases_raw = 2*math.pi*D
+            phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))
+            D = magnitudes * phases
+            
+        elif self.transition_type in {"pd_static"}:
             magnitudes_raw = self.D_static_magnitude
-            magnitudes = t.complex(real=t.sigmoid(magnitudes_raw), imag=t.zeros_like(magnitudes_raw))
+            magnitudes = t.complex(real=magnitudes_raw, imag=t.zeros_like(magnitudes_raw))
 
-            phases_raw = 2*math.pi*t.sigmoid(self.D_static_phase)
+            phases_raw = 2*math.pi*self.D_static_phase
             phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))
 
             D = magnitudes * phases
