@@ -27,9 +27,9 @@ class PD_Block(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
         self.dict_size = dictionary_size
-        if transition_type not in {"pd", "perm_only", "diag_only"}:
+        if transition_type not in {"pd", "perm_only", "diag_only", "perm_static", "pd_static"}:
             raise ValueError(
-                "transition_type must be one of {'pd', 'perm_only', 'diag_only'}"
+                "transition_type must be one of {'pd', 'perm_only', 'diag_only', 'perm_static', 'pd_static'}"
             )
         self.transition_type = transition_type
         
@@ -63,12 +63,19 @@ class PD_Block(nn.Module):
         # Matrix dictionary
         self.A_dict = nn.Parameter(t.randn(hidden_size, hidden_size, dictionary_size)/np.sqrt(hidden_size))
 
+        # Static permutation parameter (used when transition_type in {"perm_static", "pd_static"})
+        self.P_static = nn.Parameter(t.randn(hidden_size, hidden_size)/np.sqrt(hidden_size))
+
         # Glorot initialization with halved variance
         self.B_re = nn.Parameter(t.randn(hidden_size, embed_size)/np.sqrt(2*hidden_size))
         self.B_im = nn.Parameter(t.randn(hidden_size, embed_size)/np.sqrt(2*hidden_size))
 
         # Glorot initialization with halved variance
         self.D = nn.Parameter(t.randn(embed_size)/np.sqrt(embed_size))
+
+        # Static diagonal parameters (used when transition_type == "pd_static")
+        self.D_static_magnitude = nn.Parameter(t.randn(hidden_size)/np.sqrt(hidden_size))
+        self.D_static_phase = nn.Parameter(t.randn(hidden_size)/np.sqrt(hidden_size))
 
         # Readout of complex-valued states
         self.readout = nn.Linear(2*embed_size, embed_size)
@@ -115,6 +122,13 @@ class PD_Block(nn.Module):
             # Identity transition; all structure must be handled by the diagonal
             P = t.eye(N, device=x.device, dtype=hidden_states.dtype).unsqueeze(0).unsqueeze(0)
             P = P.expand(B, L, -1, -1)
+        elif self.transition_type in {"perm_static", "pd_static"}:
+            y_soft = F.softmax(self.P_static, dim=-1)
+            num_classes = y_soft.shape[-1]
+            y_hard = t.argmax(y_soft, dim=-1)
+            y_hard = F.one_hot(y_hard, num_classes=num_classes)
+            P = (y_hard - y_soft).detach() + y_soft
+            P = P.unsqueeze(0).unsqueeze(0).expand(B, L, -1, -1)
         else:
             # B x L x K
             selection_weights = F.softmax(self.S(x), dim=-1)
@@ -139,8 +153,17 @@ class PD_Block(nn.Module):
         Generating the complex-valued diagonal matrices
         """
 
-        if self.transition_type == "perm_only":
+        if self.transition_type in {"perm_only", "perm_static"}:
             D = t.ones(B, L, N, device=x.device, dtype=hidden_states.dtype)
+        elif self.transition_type == "pd_static":
+            magnitudes_raw = self.D_static_magnitude
+            magnitudes = t.complex(real=t.sigmoid(magnitudes_raw), imag=t.zeros_like(magnitudes_raw))
+
+            phases_raw = 2*math.pi*t.sigmoid(self.D_static_phase)
+            phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))
+
+            D = magnitudes * phases
+            D = D.view(1, 1, N).expand(B, L, -1)
         else:
             # B x L x N
             magnitudes_raw = self.D_magnitude_generator(x)
