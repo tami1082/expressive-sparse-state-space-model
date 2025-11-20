@@ -273,6 +273,7 @@ def run_experiment(config):
     vf_A_norm_lambda = config.get("vf_A_norm_lambda", 0.001)
     config_name = config.get("config_name")
     accumulation_steps = config.get("accumulation_steps", 1)
+    transition_type = config.get("transition_type", "pd")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -312,6 +313,7 @@ def run_experiment(config):
         model = PD( output_size = label_dim, input_size = data_dim,
             state_size = model_dim, embed_size = model_dim,
             return_all_outputs = True, num_layers = num_blocks,
+            transition_type=transition_type,
             normalize_inputs = False, readout = 'linear')
 
     else:

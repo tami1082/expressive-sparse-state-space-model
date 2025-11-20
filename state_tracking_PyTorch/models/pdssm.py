@@ -19,13 +19,19 @@ class PD_Block(nn.Module):
                  dictionary_size: int = 8,
                  hidden_D_multiple: int = 2,
                  dropout_rate: float = 0.01,
+                 transition_type: str = "pd",
                  **kwargs):
-        
+
         super(PD_Block, self).__init__()
 
         self.hidden_size = hidden_size
         self.embed_size = embed_size
         self.dict_size = dictionary_size
+        if transition_type not in {"pd", "perm_only", "diag_only"}:
+            raise ValueError(
+                "transition_type must be one of {'pd', 'perm_only', 'diag_only'}"
+            )
+        self.transition_type = transition_type
         
         # Post-norm
         self.norm = nn.LayerNorm(embed_size)
@@ -55,7 +61,7 @@ class PD_Block(nn.Module):
         self.S = nn.Linear(embed_size, dictionary_size, bias=False)
 
         # Matrix dictionary
-        self.A_dict = nn.Parameter(t.randn(hidden_size, hidden_size, dictionary_size)/np.sqrt(hidden_size))   
+        self.A_dict = nn.Parameter(t.randn(hidden_size, hidden_size, dictionary_size)/np.sqrt(hidden_size))
 
         # Glorot initialization with halved variance
         self.B_re = nn.Parameter(t.randn(hidden_size, embed_size)/np.sqrt(2*hidden_size))
@@ -105,46 +111,54 @@ class PD_Block(nn.Module):
         Generating the M matrices
         """
 
-        # B x L x K
-        selection_weights = F.softmax(self.S(x), dim=-1)
+        if self.transition_type == "diag_only":
+            # Identity transition; all structure must be handled by the diagonal
+            P = t.eye(N, device=x.device, dtype=hidden_states.dtype).unsqueeze(0).unsqueeze(0)
+            P = P.expand(B, L, -1, -1)
+        else:
+            # B x L x K
+            selection_weights = F.softmax(self.S(x), dim=-1)
 
-        # B x L x N x N
-        M =  einsum(self.A_dict, selection_weights, 'n1 n2 k, b l k -> b l n1 n2')
+            # B x L x N x N
+            M =  einsum(self.A_dict, selection_weights, 'n1 n2 k, b l k -> b l n1 n2')
 
-        """
-        Transforming the M matrix into one-hot form while keeping the gradient path in accordance with the column-wise softmax of M
-        """
+            """
+            Transforming the M matrix into one-hot form while keeping the gradient path in accordance with the column-wise softmax of M
+            """
 
-        y_soft = F.softmax(M, dim=-1)
-        num_classes = y_soft.shape[-1]
-        y_hard = t.argmax(y_soft, dim=-1)
+            y_soft = F.softmax(M, dim=-1)
+            num_classes = y_soft.shape[-1]
+            y_hard = t.argmax(y_soft, dim=-1)
 
-        # Conversion to one-hot vectors
-        y_hard = F.one_hot(y_hard, num_classes=num_classes)
-        # B x L x N x N
-        P = (y_hard - y_soft).detach() + y_soft
+            # Conversion to one-hot vectors
+            y_hard = F.one_hot(y_hard, num_classes=num_classes)
+            # B x L x N x N
+            P = (y_hard - y_soft).detach() + y_soft
 
         """
         Generating the complex-valued diagonal matrices
         """
 
-        # B x L x N
-        magnitudes_raw = self.D_magnitude_generator(x)
-        magnitudes = t.complex(real=magnitudes_raw, imag=t.zeros_like(magnitudes_raw))
+        if self.transition_type == "perm_only":
+            D = t.ones(B, L, N, device=x.device, dtype=hidden_states.dtype)
+        else:
+            # B x L x N
+            magnitudes_raw = self.D_magnitude_generator(x)
+            magnitudes = t.complex(real=magnitudes_raw, imag=t.zeros_like(magnitudes_raw))
 
-        # B x L x N
-        phases_raw = 2*math.pi*self.D_phase_generator(x)
-        phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))
+            # B x L x N
+            phases_raw = 2*math.pi*self.D_phase_generator(x)
+            phases = t.exp(t.complex(real=t.zeros_like(phases_raw), imag=phases_raw))
 
-        # B x L x N
-        D = magnitudes * phases
+            # B x L x N
+            D = magnitudes * phases
 
         """
-        Combining the P and D matrices 
+        Combining the P and D matrices
         """
 
         # B x L x N x N
-        transition_matrices = D.unsqueeze(-1) * P
+        transition_matrices = D.unsqueeze(-1) * P.to(D.dtype)
 
         """
         Transform the input
@@ -189,18 +203,20 @@ class PD(nn.Module):
                  return_all_outputs: bool = False,
                  num_layers: int = 2,
                  dropout_rate: float = 0.01,
+                 transition_type: str = "pd",
                  **kwargs):
-        
+
         super(PD, self).__init__()
 
         self.return_all_outputs = return_all_outputs
         self.num_layers = num_layers
 
         self.blocks = nn.ModuleList(PD_Block(
-            embed_size=embed_size, 
-            hidden_size=state_size, 
-            dictionary_size=dictionary_size, 
-            dropout_rate = dropout_rate) for _ in range(num_layers))
+            embed_size=embed_size,
+            hidden_size=state_size,
+            dictionary_size=dictionary_size,
+            dropout_rate = dropout_rate,
+            transition_type=transition_type) for _ in range(num_layers))
         
         self.embedding = nn.Embedding(input_size, embed_size)
         
